@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        go-version: [1.20.x]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+            binary-ext: ""
+            goos: linux
+          - os: macos-latest
+            arch: amd64
+            binary-ext: ""
+            goos: darwin
+          - os: windows-latest
+            arch: amd64
+            binary-ext: ".exe"
+            goos: windows
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Build binary
+        run: |
+          go env
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.arch }} go build -o "tlscheck-${{ matrix.goos }}-${{ matrix.arch }}${{ matrix.binary-ext }}"
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./tlscheck-${{ matrix.goos }}-${{ matrix.arch }}${{ matrix.binary-ext }}
+          asset_name: tlscheck-${{ matrix.goos }}-${{ matrix.arch }}${{ matrix.binary-ext }}
+          asset_content_type: application/octet-stream
