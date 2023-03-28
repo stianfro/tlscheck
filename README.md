@@ -1,4 +1,4 @@
-![GitHub Workflow Status](https://img.shields.io/github/workflow/status/stianfro/tlscheck/CI?style=flat-square)
+![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/stianfro/tlscheck/release.yml?branch=main)
 
 # tlscheck - Kubernetes TLS Certificate Expiration Checker
 
@@ -35,14 +35,13 @@ sudo mv tlscheck /usr/local/bin/
 Run the program:
 
 ```
-./tlscheck
+tlscheck
 ```
 
 The output will be displayed in the following format:
 
 ```
 SECRET_NAME                    NAMESPACE                       ISSUER                          REMAINING_LIFETIME (days)
------------------------------------------------------------------------
 example-tls-secret             default                         CN=example.com                  89
 another-tls-secret             kube-system                     CN=another-example.com          150
 ...
@@ -53,4 +52,3 @@ Feel free to open issues or submit pull requests if you find any bugs or have su
 
 ## License
 This project is licensed under the MIT License.
-
