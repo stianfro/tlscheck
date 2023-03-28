@@ -79,7 +79,7 @@ func main() {
 				continue
 			}
 
-			remainingDays := int(cert.NotAfter.Sub(time.Now()).Hours() / 24)
+			remainingDays := int(time.Until(cert.NotAfter).Hours() / 24)
 			issuer := cert.Issuer.String()
 			// Skip if cert.Issuer is openshift ca
 			fmt.Fprintf(w, "%-30s\t%-30s\t%s\t%5d\n", secret.Name, secret.Namespace, issuer, remainingDays)
