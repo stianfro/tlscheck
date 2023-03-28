@@ -2,46 +2,47 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/prometheus"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
-	// Initialize OpenTelemetry with Prometheus exporter
-	exporter, err := prometheus.InstallNewPipeline(prometheus.Config{})
-	if err != nil {
-		log.Fatalf("Failed to create Prometheus exporter: %v", err)
+	kubeconfigPath := os.Getenv("KUBECONFIG")
+	if kubeconfigPath == "" {
+		kubeconfigPath = os.Getenv("HOME") + "/.kube/config"
 	}
-	http.HandleFunc("/", exporter.ServeHTTP)
-	go func() {
-		_ = http.ListenAndServe(":2112", nil)
-	}()
 
-	// Set global OpenTelemetry options
-	res, _ := resource.New(context.Background(), resource.WithAttributes(
-		semconv.SchemaURL,
-		semconv.ServiceNameKey.String("tlscheck"),
-	))
-	otel.SetResource(res)
-
-	otel.SetTextMapPropagator(propagation.TraceContext{})
-
-	// Initialize Kubernetes client
-	clientset, err := initKubeClient()
+	clientset, err := initKubernetesClient(kubeconfigPath)
 	if err != nil {
 		log.Fatalf("Failed to initialize Kubernetes client: %v", err)
 	}
 
-	fmt.Printf("%-30s %5s\n", "CERTIFICATE_NAME", "REMAINING_LIFETIME (days)")
-	fmt.Println("---------------------------------------------------")
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
 
-	// Check TLS certificates and export metrics
-	checkTLSCertificates(context.Background(), clientset)
+	// Register and start the metrics server
+	http.Handle("/metrics", promhttp.Handler())
+	go func() {
+		log.Println("Metrics server listening on :2112")
+		if err := http.ListenAndServe(":2112", nil); err != nil {
+			log.Fatalf("Failed to start metrics server: %v", err)
+		}
+	}()
+
+	// Continuously update the metrics
+	go func() {
+		for {
+			checkTLSCertificates(ctx, clientset)
+		}
+	}()
+
+	// Wait for an interrupt signal
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt)
+	<-sig
+	log.Println("Shutting down...")
 }

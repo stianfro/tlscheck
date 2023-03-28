@@ -4,54 +4,47 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
-	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/util/homedir"
-
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/sdk/metric"
+	"k8s.io/client-go/tools/clientcmd/api"
 )
 
-var err error
+var (
+	remainingLifetimeGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "tls_remaining_lifetime",
+			Help: "Remaining lifetime of TLS certificates in days",
+		},
+		[]string{"namespace", "secret_name"},
+	)
+)
 
-func initKubeClient() (*kubernetes.Clientset, error) {
-	var config *rest.Config
-	kubeconfig := filepath.Join(homedir.HomeDir(), ".kube", "config")
+func init() {
+	prometheus.MustRegister(remainingLifetimeGauge)
+}
 
-	if _, err := os.Stat(kubeconfig); err == nil {
-		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
-	} else {
-		config, err = rest.InClusterConfig()
-	}
-
+func initKubernetesClient(kubeconfigPath string) (*kubernetes.Clientset, error) {
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
+		&clientcmd.ConfigOverrides{ClusterInfo: api.Cluster{Server: ""}}).ClientConfig()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read kubeconfig: %v", err)
+		return nil, err
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Kubernetes client: %v", err)
+		return nil, err
 	}
 
 	return clientset, nil
 }
 
 func checkTLSCertificates(ctx context.Context, clientset *kubernetes.Clientset) {
-	// Create metric instrument
-	meter := otel.Tracer("tlscheck")
-	remainingLifetimeGauge := metric.Must(meter).NewInt64Gauge("tls.remaining_lifetime",
-		metric.WithDescription("Remaining lifetime of TLS certificates in days"),
-	)
-
 	namespaces, err := clientset.CoreV1().Namespaces().List(ctx, v1.ListOptions{})
 	if err != nil {
 		log.Fatalf("Failed to list namespaces: %v", err)
@@ -60,38 +53,35 @@ func checkTLSCertificates(ctx context.Context, clientset *kubernetes.Clientset) 
 	for _, namespace := range namespaces.Items {
 		secrets, err := clientset.CoreV1().Secrets(namespace.Name).List(ctx, v1.ListOptions{})
 		if err != nil {
-			log.Printf("Failed to list secrets in namespace %s: %v", namespace.Name, err)
-			continue
+			log.Fatalf("Failed to list secrets in namespace %s: %v", namespace.Name, err)
 		}
 
 		for _, secret := range secrets.Items {
-			if secret.Type != "kubernetes.io/tls" {
-				continue
+			if secret.Type == "kubernetes.io/tls" {
+				certData, ok := secret.Data["tls.crt"]
+				if !ok {
+					continue
+				}
+
+				block, _ := pem.Decode(certData)
+				if block == nil {
+					log.Printf("Failed to decode PEM data for secret %s/%s", namespace.Name, secret.Name)
+					continue
+				}
+
+				cert, err := x509.ParseCertificate(block.Bytes)
+				if err != nil {
+					log.Printf("Failed to parse certificate for secret %s/%s: %v", namespace.Name, secret.Name, err)
+					continue
+				}
+
+				remainingLifetime := float64(cert.NotAfter.Sub(time.Now()).Hours()) / 24
+
+				remainingLifetimeGauge.With(prometheus.Labels{
+					"namespace":   namespace.Name,
+					"secret_name": secret.Name,
+				}).Set(remainingLifetime)
 			}
-
-			certBytes := secret.Data["tls.crt"]
-
-			block, _ := pem.Decode(certBytes)
-			if block == nil {
-				log.Printf("Failed to parse PEM data for secret %s/%s", namespace.Name, secret.Name)
-				continue
-			}
-
-			cert, err := x509.ParseCertificate(block.Bytes)
-			if err != nil {
-				log.Printf("Failed to parse certificate for secret %s/%s: %v", namespace.Name, secret.Name, err)
-				continue
-			}
-
-			remainingDays := int(cert.NotAfter.Sub(time.Now()).Hours() / 24)
-
-			// Record remaining lifetime using the metric instrument
-			remainingLifetimeGauge.Record(ctx, int64(remainingDays),
-				attribute.String("namespace", namespace.Name),
-				attribute.String("secret_name", secret.Name),
-			)
-
-			fmt.Printf("%-30s %5d\n", secret.Name, remainingDays)
 		}
 	}
 }

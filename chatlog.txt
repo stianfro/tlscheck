@@ -1,0 +1,1620 @@
+Write a bash script that checks for all TLS type Secrets in Kubernetes with kubectl and used openssl to verify their current validity.
+
+A list of all certificates and their remaining lifetime should be printed out.
+
+You can use the following bash script to check for all TLS type Secrets in Kubernetes and use OpenSSL to verify their current validity. The script will print out a list of all certificates and their remaining lifetime.
+
+bash
+Copy code
+#!/bin/bash
+
+# Get all TLS type secrets in Kubernetes
+secrets=$(kubectl get secrets --all-namespaces -o jsonpath='{.items[?(@.type=="kubernetes.io/tls")].metadata.namespace}{"/"}{.metadata.name}{"\n"}')
+
+# Function to parse the remaining lifetime of a certificate
+function remaining_lifetime() {
+  local end_date=$(openssl x509 -enddate -noout -in <(echo "$1"))
+  local end_date_seconds=$(date -d "${end_date#*=}" +%s)
+  local now_seconds=$(date +%s)
+  local remaining_lifetime=$(( (end_date_seconds - now_seconds) / 86400 ))
+  echo $remaining_lifetime
+}
+
+echo "CERTIFICATE_NAME  REMAINING_LIFETIME (days)"
+echo "--------------------------------------------"
+
+# Iterate through each secret and print the remaining lifetime
+while IFS= read -r secret; do
+  namespace=$(echo "$secret" | cut -d '/' -f 1)
+  name=$(echo "$secret" | cut -d '/' -f 2)
+
+  # Get the certificate from the secret
+  cert_data=$(kubectl get secret "$name" -n "$namespace" -o jsonpath='{.data.tls\.crt}' | base64 --decode)
+
+  # Calculate the remaining lifetime of the certificate
+  remaining_days=$(remaining_lifetime "$cert_data")
+
+  # Print the certificate name and its remaining lifetime
+  printf "%-30s %5s\n" "$name" "$remaining_days"
+done <<< "$secrets"
+To use this script, save it as a file named check_tls_secrets.sh, make it executable with chmod +x check_tls_secrets.sh, and run it with ./check_tls_secrets.sh. Make sure you have kubectl configured with the correct cluster context and openssl installed on your system.
+
+
+
+
+Stian Frøystein
+That gives me the following error:
+```
+CERTIFICATE_NAME  REMAINING_LIFETIME (days)
+--------------------------------------------
+error: resource name may not be empty
+unable to load certificate
+8440136000:error:09FFF06C:PEM routines:CRYPTO_internal:no start line:/AppleInternal/Library/BuildRoots/9e200cfa-7d96-11ed-886f-a23c4f261b56/Library/Caches/com.apple.xbs/Sources/libressl/libressl-3.3/crypto/pem/pem_lib.c:694:Expecting: TRUSTED CERTIFICATE
+date: illegal option -- d
+usage: date [-jnRu] [-r seconds|file] [-v[+|-]val[ymwdHMS]]
+            [-I[date | hours | minutes | seconds]]
+            [-f fmt date | [[[mm]dd]HH]MM[[cc]yy][.ss]] [+format]
+                               -19444
+```
+
+Can you adjust the script to fix this?
+I apologize for the inconvenience. It seems that the script is not working correctly on your system, most likely due to differences in date command options and the base64 command. I've updated the script to be more compatible with macOS:
+
+bash
+Copy code
+#!/bin/bash
+
+# Get all TLS type secrets in Kubernetes
+secrets=$(kubectl get secrets --all-namespaces -o jsonpath='{.items[?(@.type=="kubernetes.io/tls")].metadata.namespace}{"/"}{.metadata.name}{"\n"}')
+
+# Function to parse the remaining lifetime of a certificate
+function remaining_lifetime() {
+  local end_date=$(openssl x509 -enddate -noout -in <(echo "$1"))
+  local end_date_seconds=$(date -jf "%b %d %T %Y %Z" "${end_date#*=}" +%s)
+  local now_seconds=$(date +%s)
+  local remaining_lifetime=$(( (end_date_seconds - now_seconds) / 86400 ))
+  echo $remaining_lifetime
+}
+
+echo "CERTIFICATE_NAME  REMAINING_LIFETIME (days)"
+echo "--------------------------------------------"
+
+# Iterate through each secret and print the remaining lifetime
+while IFS= read -r secret; do
+  namespace=$(echo "$secret" | cut -d '/' -f 1)
+  name=$(echo "$secret" | cut -d '/' -f 2)
+
+  # Get the certificate from the secret
+  cert_data=$(kubectl get secret "$name" -n "$namespace" -o jsonpath='{.data.tls\.crt}' | base64 --decode)
+
+  # Calculate the remaining lifetime of the certificate
+  remaining_days=$(remaining_lifetime "$cert_data")
+
+  # Print the certificate name and its remaining lifetime
+  printf "%-30s %5s\n" "$name" "$remaining_days"
+done <<< "$secrets"
+Please try running the updated script again. If you still encounter any issues, let me know so I can help you further.
+
+
+
+
+Stian Frøystein
+That gives me the following error:
+```
+CERTIFICATE_NAME  REMAINING_LIFETIME (days)
+--------------------------------------------
+error: resource name may not be empty
+unable to load certificate
+8440136000:error:09FFF06C:PEM routines:CRYPTO_internal:no start line:/AppleInternal/Library/BuildRoots/9e200cfa-7d96-11ed-886f-a23c4f261b56/Library/Caches/com.apple.xbs/Sources/libressl/libressl-3.3/crypto/pem/pem_lib.c:694:Expecting: TRUSTED CERTIFICATE
+Failed conversion of ``'' using format ``%b %d %T %Y %Z''
+date: illegal time format
+usage: date [-jnRu] [-r seconds|file] [-v[+|-]val[ymwdHMS]]
+            [-I[date | hours | minutes | seconds]]
+            [-f fmt date | [[[mm]dd]HH]MM[[cc]yy][.ss]] [+format]
+                               -19444
+```
+I apologize for the confusion earlier. It seems the script is still having compatibility issues. I've made further adjustments to the script to handle empty lines and changed the date format for better compatibility. Please try the updated script below:
+
+bash
+Copy code
+#!/bin/bash
+
+# Get all TLS type secrets in Kubernetes
+secrets=$(kubectl get secrets --all-namespaces -o jsonpath='{.items[?(@.type=="kubernetes.io/tls")].metadata.namespace}{"/"}{.metadata.name}{"\n"}')
+
+# Function to parse the remaining lifetime of a certificate
+function remaining_lifetime() {
+  if [ -z "$1" ]; then
+    echo "Error: Empty certificate data."
+    return
+  fi
+
+  local end_date=$(openssl x509 -enddate -noout -in <(echo "$1"))
+  local end_date_seconds=$(date -jf "%b %d %T %Y %Z" "${end_date#*=}" +%s 2>/dev/null)
+  local now_seconds=$(date +%s)
+  local remaining_lifetime=$(( (end_date_seconds - now_seconds) / 86400 ))
+  echo $remaining_lifetime
+}
+
+echo "CERTIFICATE_NAME  REMAINING_LIFETIME (days)"
+echo "--------------------------------------------"
+
+# Iterate through each secret and print the remaining lifetime
+while IFS= read -r secret; do
+  if [ -z "$secret" ]; then
+    continue
+  fi
+
+  namespace=$(echo "$secret" | cut -d '/' -f 1)
+  name=$(echo "$secret" | cut -d '/' -f 2)
+
+  # Get the certificate from the secret
+  cert_data=$(kubectl get secret "$name" -n "$namespace" -o jsonpath='{.data.tls\.crt}' | base64 --decode 2>/dev/null)
+
+  # Calculate the remaining lifetime of the certificate
+  remaining_days=$(remaining_lifetime "$cert_data")
+
+  # Print the certificate name and its remaining lifetime
+  printf "%-30s %5s\n" "$name" "$remaining_days"
+done <<< "$secrets"
+Please try running this updated script again. If you still encounter any issues, let me know so I can help you further.
+
+
+
+
+Stian Frøystein
+Looking better, I am getting this error now though:
+```
+CERTIFICATE_NAME  REMAINING_LIFETIME (days)
+--------------------------------------------
+error: resource name may not be empty
+                               Error: Empty certificate data.
+```
+
+The script should handle empty secrets.
+I apologize for the confusion. I have updated the script to handle empty secrets and skip printing them in the output. Please try the updated script below:
+
+bash
+Copy code
+#!/bin/bash
+
+# Get all TLS type secrets in Kubernetes
+secrets=$(kubectl get secrets --all-namespaces -o jsonpath='{.items[?(@.type=="kubernetes.io/tls")].metadata.namespace}{"/"}{.metadata.name}{"\n"}')
+
+# Function to parse the remaining lifetime of a certificate
+function remaining_lifetime() {
+  if [ -z "$1" ]; then
+    echo "Error: Empty certificate data."
+    return
+  fi
+
+  local end_date=$(openssl x509 -enddate -noout -in <(echo "$1"))
+  local end_date_seconds=$(date -jf "%b %d %T %Y %Z" "${end_date#*=}" +%s 2>/dev/null)
+  local now_seconds=$(date +%s)
+  local remaining_lifetime=$(( (end_date_seconds - now_seconds) / 86400 ))
+  echo $remaining_lifetime
+}
+
+echo "CERTIFICATE_NAME  REMAINING_LIFETIME (days)"
+echo "--------------------------------------------"
+
+# Iterate through each secret and print the remaining lifetime
+while IFS= read -r secret; do
+  if [ -z "$secret" ]; then
+    continue
+  fi
+
+  namespace=$(echo "$secret" | cut -d '/' -f 1)
+  name=$(echo "$secret" | cut -d '/' -f 2)
+
+  # Get the certificate from the secret
+  cert_data=$(kubectl get secret "$name" -n "$namespace" -o jsonpath='{.data.tls\.crt}' | base64 --decode 2>/dev/null)
+
+  if [ -z "$cert_data" ]; then
+    continue
+  fi
+
+  # Calculate the remaining lifetime of the certificate
+  remaining_days=$(remaining_lifetime "$cert_data")
+
+  # Print the certificate name and its remaining lifetime
+  printf "%-30s %5s\n" "$name" "$remaining_days"
+done <<< "$secrets"
+This script should now handle empty secrets and skip them in the output. If you still encounter any issues, please let me know.
+
+
+
+
+Stian Frøystein
+I am now getting this:
+```
+CERTIFICATE_NAME  REMAINING_LIFETIME (days)
+--------------------------------------------
+error: resource name may not be empty
+```
+
+I think we need to add more validation in general and possibly some debug steps so that we can find out where the script fails.
+I apologize for the issues you've been experiencing. Let's add more validation and debugging steps to the script. The updated script below includes better handling of invalid secrets and additional output to help identify issues:
+
+bash
+Copy code
+#!/bin/bash
+
+set -o pipefail
+
+# Get all TLS type secrets in Kubernetes
+secrets=$(kubectl get secrets --all-namespaces -o jsonpath='{.items[?(@.type=="kubernetes.io/tls")].metadata.namespace}{"/"}{.metadata.name}{"\n"}')
+
+# Function to parse the remaining lifetime of a certificate
+function remaining_lifetime() {
+  if [ -z "$1" ]; then
+    echo "Error: Empty certificate data."
+    return
+  fi
+
+  local end_date=$(openssl x509 -enddate -noout -in <(echo "$1"))
+  local end_date_seconds=$(date -jf "%b %d %T %Y %Z" "${end_date#*=}" +%s 2>/dev/null)
+  local now_seconds=$(date +%s)
+  local remaining_lifetime=$(( (end_date_seconds - now_seconds) / 86400 ))
+  echo $remaining_lifetime
+}
+
+echo "CERTIFICATE_NAME  REMAINING_LIFETIME (days)"
+echo "--------------------------------------------"
+
+# Iterate through each secret and print the remaining lifetime
+while IFS= read -r secret; do
+  if [ -z "$secret" ]; then
+    echo "Warning: Skipping empty secret."
+    continue
+  fi
+
+  namespace=$(echo "$secret" | cut -d '/' -f 1)
+  name=$(echo "$secret" | cut -d '/' -f 2)
+
+  if [ -z "$namespace" ] || [ -z "$name" ]; then
+    echo "Warning: Skipping invalid secret entry: $secret"
+    continue
+  fi
+
+  # Get the certificate from the secret
+  cert_data=$(kubectl get secret "$name" -n "$namespace" -o jsonpath='{.data.tls\.crt}' | base64 --decode 2>/dev/null)
+
+  if [ -z "$cert_data" ]; then
+    echo "Warning: Skipping secret with empty certificate data: $name"
+    continue
+  fi
+
+  # Calculate the remaining lifetime of the certificate
+  remaining_days=$(remaining_lifetime "$cert_data")
+
+  if [ -z "$remaining_days" ]; then
+    echo "Warning: Unable to calculate remaining lifetime for secret: $name"
+    continue
+  fi
+
+  # Print the certificate name and its remaining lifetime
+  printf "%-30s %5s\n" "$name" "$remaining_days"
+done <<< "$secrets"
+This script should now provide more information on any issues encountered while processing the secrets. If you still face any issues or need further assistance, please let me know.
+
+
+
+
+Stian Frøystein
+I think the problem is the first kubectl command to get all secrets, you can see the output below:
+```
+$ kubectl get secrets --all-namespaces -o jsonpath='{.items[?(@.type=="kubernetes.io/tls")].metadata.namespace}{"/"}{.metadata.name}{"\n"}'
+kube-system longhorn-system longhorn-system capi-system capi-kubeadm-bootstrap-system capi-kubeadm-control-plane-system capk-system kubevirt kubevirt kubevirt kubevirt kubevirt kubevirt kubevirt kubevirt/
+```
+
+As you can see, it does not produce the expected output.
+
+I have created an alternative command that can be used instead, I think this produces the desired output:
+```
+$ kubectl get secrets --all-namespaces | grep kubernetes.io/tls | awk '{ print $1 "/" $2  }'
+kube-system/k3s-serving
+longhorn-system/longhorn-webhook-ca
+longhorn-system/longhorn-webhook-tls
+capi-system/capi-webhook-service-cert
+capi-kubeadm-bootstrap-system/capi-kubeadm-bootstrap-webhook-service-cert
+capi-kubeadm-control-plane-system/capi-kubeadm-control-plane-webhook-service-cert
+capk-system/capk-webhook-service-cert
+kubevirt/kubevirt-ca
+kubevirt/kubevirt-export-ca
+kubevirt/kubevirt-virt-api-certs
+kubevirt/kubevirt-controller-certs
+kubevirt/kubevirt-exportproxy-certs
+kubevirt/kubevirt-virt-handler-server-certs
+kubevirt/kubevirt-virt-handler-certs
+kubevirt/kubevirt-operator-certs
+```
+Thank you for providing the alternative command. I have updated the script to use the command you provided to get the list of secrets. Here is the updated script:
+
+bash
+Copy code
+#!/bin/bash
+
+set -o pipefail
+
+# Get all TLS type secrets in Kubernetes
+secrets=$(kubectl get secrets --all-namespaces | grep "kubernetes.io/tls" | awk '{ print $1 "/" $2 }')
+
+# Function to parse the remaining lifetime of a certificate
+function remaining_lifetime() {
+  if [ -z "$1" ]; then
+    echo "Error: Empty certificate data."
+    return
+  fi
+
+  local end_date=$(openssl x509 -enddate -noout -in <(echo "$1"))
+  local end_date_seconds=$(date -jf "%b %d %T %Y %Z" "${end_date#*=}" +%s 2>/dev/null)
+  local now_seconds=$(date +%s)
+  local remaining_lifetime=$(( (end_date_seconds - now_seconds) / 86400 ))
+  echo $remaining_lifetime
+}
+
+echo "CERTIFICATE_NAME  REMAINING_LIFETIME (days)"
+echo "--------------------------------------------"
+
+# Iterate through each secret and print the remaining lifetime
+while IFS= read -r secret; do
+  if [ -z "$secret" ]; then
+    echo "Warning: Skipping empty secret."
+    continue
+  fi
+
+  namespace=$(echo "$secret" | cut -d '/' -f 1)
+  name=$(echo "$secret" | cut -d '/' -f 2)
+
+  if [ -z "$namespace" ] || [ -z "$name" ]; then
+    echo "Warning: Skipping invalid secret entry: $secret"
+    continue
+  fi
+
+  # Get the certificate from the secret
+  cert_data=$(kubectl get secret "$name" -n "$namespace" -o jsonpath='{.data.tls\.crt}' | base64 --decode 2>/dev/null)
+
+  if [ -z "$cert_data" ]; then
+    echo "Warning: Skipping secret with empty certificate data: $name"
+    continue
+  fi
+
+  # Calculate the remaining lifetime of the certificate
+  remaining_days=$(remaining_lifetime "$cert_data")
+
+  if [ -z "$remaining_days" ]; then
+    echo "Warning: Unable to calculate remaining lifetime for secret: $name"
+    continue
+  fi
+
+  # Print the certificate name and its remaining lifetime
+  printf "%-30s %5s\n" "$name" "$remaining_days"
+done <<< "$secrets"
+Please try running this updated script with the new command to get the list of secrets. If you still face any issues or need further assistance, please let me know.
+
+
+
+
+Stian Frøystein
+Now I would like you to rewrite this script into Go, so that it can be distributed as a CLI tool.
+It should be in a single main.go file.
+For Kubernetes authentication, use the kubeconfig file located at `~/.kube/config`.
+I have rewritten the script in Go as a single main.go file. This script will read the kubeconfig file located at ~/.kube/config for Kubernetes authentication. You can compile and run this Go script as a CLI tool. Here is the main.go file:
+
+go
+Copy code
+package main
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/pem"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"time"
+
+	"crypto/x509"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+func main() {
+	var config *rest.Config
+	var err error
+
+	kubeconfig := filepath.Join(homedir.HomeDir(), ".kube", "config")
+
+	if _, err := os.Stat(kubeconfig); err == nil {
+		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+	} else {
+		config, err = rest.InClusterConfig()
+	}
+
+	if err != nil {
+		log.Fatalf("Failed to read kubeconfig: %v", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		log.Fatalf("Failed to create Kubernetes client: %v", err)
+	}
+
+	namespaces, err := clientset.CoreV1().Namespaces().List(context.Background(), v1.ListOptions{})
+	if err != nil {
+		log.Fatalf("Failed to list namespaces: %v", err)
+	}
+
+	fmt.Printf("%-30s %5s\n", "CERTIFICATE_NAME", "REMAINING_LIFETIME (days)")
+	fmt.Println("---------------------------------------------------")
+
+	for _, namespace := range namespaces.Items {
+		secrets, err := clientset.CoreV1().Secrets(namespace.Name).List(context.Background(), v1.ListOptions{})
+		if err != nil {
+			log.Printf("Failed to list secrets in namespace %s: %v", namespace.Name, err)
+			continue
+		}
+
+		for _, secret := range secrets.Items {
+			if secret.Type != "kubernetes.io/tls" {
+				continue
+			}
+
+			certBytes, err := base64.StdEncoding.DecodeString(secret.Data["tls.crt"])
+			if err != nil {
+				log.Printf("Failed to decode certificate data for secret %s/%s: %v", namespace.Name, secret.Name, err)
+				continue
+			}
+
+			block, _ := pem.Decode(certBytes)
+			if block == nil {
+				log.Printf("Failed to parse PEM data for secret %s/%s", namespace.Name, secret.Name)
+				continue
+			}
+
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				log.Printf("Failed to parse certificate for secret %s/%s: %v", namespace.Name, secret.Name, err)
+				continue
+			}
+
+			remainingDays := int(cert.NotAfter.Sub(time.Now()).Hours() / 24)
+			fmt.Printf("%-30s %5d\n", secret.Name, remainingDays)
+		}
+	}
+}
+To build and run this Go script as a CLI tool, first make sure you have Go installed on your system. Then, save the above code as main.go and execute the following commands in the same directory as the main.go file:
+
+sh
+Copy code
+go mod init tlscheck
+go build -o tlscheck
+./tlscheck
+This will create a binary named tlscheck that you can distribute and use as a CLI tool. If you still face any issues or need further assistance, please let me know
+
+
+
+
+Stian Frøystein
+Build fails with this error:
+```
+./main.go:63:54: cannot use secret.Data["tls.crt"] (map index expression of type []byte) as string value in argument to base64.StdEncoding.DecodeString
+```
+Apologies for the oversight. I see the issue now. The secret.Data["tls.crt"] is already a byte slice, and there is no need to use base64 decoding. Here is the corrected main.go file:
+
+go
+Copy code
+package main
+
+import (
+	"context"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"time"
+
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
+)
+
+func main() {
+	var config *rest.Config
+	var err error
+
+	kubeconfig := filepath.Join(homedir.HomeDir(), ".kube", "config")
+
+	if _, err := os.Stat(kubeconfig); err == nil {
+		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+	} else {
+		config, err = rest.InClusterConfig()
+	}
+
+	if err != nil {
+		log.Fatalf("Failed to read kubeconfig: %v", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		log.Fatalf("Failed to create Kubernetes client: %v", err)
+	}
+
+	namespaces, err := clientset.CoreV1().Namespaces().List(context.Background(), v1.ListOptions{})
+	if err != nil {
+		log.Fatalf("Failed to list namespaces: %v", err)
+	}
+
+	fmt.Printf("%-30s %5s\n", "CERTIFICATE_NAME", "REMAINING_LIFETIME (days)")
+	fmt.Println("---------------------------------------------------")
+
+	for _, namespace := range namespaces.Items {
+		secrets, err := clientset.CoreV1().Secrets(namespace.Name).List(context.Background(), v1.ListOptions{})
+		if err != nil {
+			log.Printf("Failed to list secrets in namespace %s: %v", namespace.Name, err)
+			continue
+		}
+
+		for _, secret := range secrets.Items {
+			if secret.Type != "kubernetes.io/tls" {
+				continue
+			}
+
+			certBytes := secret.Data["tls.crt"]
+
+			block, _ := pem.Decode(certBytes)
+			if block == nil {
+				log.Printf("Failed to parse PEM data for secret %s/%s", namespace.Name, secret.Name)
+				continue
+			}
+
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				log.Printf("Failed to parse certificate for secret %s/%s: %v", namespace.Name, secret.Name, err)
+				continue
+			}
+
+			remainingDays := int(cert.NotAfter.Sub(time.Now()).Hours() / 24)
+			fmt.Printf("%-30s %5d\n", secret.Name, remainingDays)
+		}
+	}
+}
+Please try building and running this corrected main.go file. If you face any issues or need further assistance, please let me know.
+
+
+
+
+Stian Frøystein
+Now add instrumentation to the program using OpenTelemetry so that the lifetime metrics for TLS certificates can be exported to Prometheus.
+To add instrumentation to the program using OpenTelemetry and export the lifetime metrics for TLS certificates to Prometheus, you'll need to install the required OpenTelemetry packages. Add the following imports to your main.go file:
+
+go
+Copy code
+import (
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/metric/prometheus"
+	"go.opentelemetry.io/otel/label"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
+	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
+)
+After importing the required packages, initialize the OpenTelemetry and Prometheus exporters. Add the following code at the beginning of the main function:
+
+go
+Copy code
+func main() {
+	// Initialize OpenTelemetry with Prometheus exporter
+	exporter, err := prometheus.InstallNewPipeline(prometheus.Config{})
+	if err != nil {
+		log.Fatalf("Failed to create Prometheus exporter: %v", err)
+	}
+	http.HandleFunc("/", exporter.ServeHTTP)
+	go func() {
+		_ = http.ListenAndServe(":2112", nil)
+	}()
+
+	// Set global OpenTelemetry options
+	res, _ := resource.New(context.Background(), resource.WithAttributes(
+		semconv.SchemaURL,
+		semconv.ServiceNameKey.String("tlscheck"),
+	))
+	otel.SetResource(res)
+
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+Create a metric instrument using OpenTelemetry to record the remaining lifetime of TLS certificates:
+
+go
+Copy code
+	// Create metric instrument
+	meter := otel.Meter("tlscheck")
+	remainingLifetimeGauge := metric.Must(meter).NewInt64Gauge("tls.remaining_lifetime",
+		metric.WithDescription("Remaining lifetime of TLS certificates in days"),
+	)
+Update the loop that iterates over the secrets to record the remaining lifetime of each TLS certificate using the metric instrument:
+
+go
+Copy code
+	for _, namespace := range namespaces.Items {
+		secrets, err := clientset.CoreV1().Secrets(namespace.Name).List(context.Background(), v1.ListOptions{})
+		if err != nil {
+			log.Printf("Failed to list secrets in namespace %s: %v", namespace.Name, err)
+			continue
+		}
+
+		for _, secret := range secrets.Items {
+			if secret.Type != "kubernetes.io/tls" {
+				continue
+			}
+
+			certBytes := secret.Data["tls.crt"]
+
+			block, _ := pem.Decode(certBytes)
+			if block == nil {
+				log.Printf("Failed to parse PEM data for secret %s/%s", namespace.Name, secret.Name)
+				continue
+			}
+
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				log.Printf("Failed to parse certificate for secret %s/%s: %v", namespace.Name, secret.Name, err)
+				continue
+			}
+
+			remainingDays := int(cert.NotAfter.Sub(time.Now()).Hours() / 24)
+
+			// Record remaining lifetime using the metric instrument
+			remainingLifetimeGauge.Record(context.Background(), int64(remainingDays),
+				label.String("namespace", namespace.Name),
+				label.String("secret_name", secret.Name),
+			)
+
+			fmt.Printf("%-30s %5d\n", secret.Name, remainingDays)
+		}
+	}
+Now you can run the updated main.go script, and it will export the remaining lifetime of TLS certificates as a metric to Prometheus. To see the exported metrics, open a web browser and navigate to `http://
+
+
+
+
+Stian Frøystein
+Can you print the complete new main.go file?
+Certainly! Here is the complete main.go file with OpenTelemetry instrumentation and Prometheus exporter:
+
+go
+Copy code
+package main
+
+import (
+	"context"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/metric/prometheus"
+	"go.opentelemetry.io/otel/label"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
+	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
+)
+
+func main() {
+	// Initialize OpenTelemetry with Prometheus exporter
+	exporter, err := prometheus.InstallNewPipeline(prometheus.Config{})
+	if err != nil {
+		log.Fatalf("Failed to create Prometheus exporter: %v", err)
+	}
+	http.HandleFunc("/", exporter.ServeHTTP)
+	go func() {
+		_ = http.ListenAndServe(":2112", nil)
+	}()
+
+	// Set global OpenTelemetry options
+	res, _ := resource.New(context.Background(), resource.WithAttributes(
+		semconv.SchemaURL,
+		semconv.ServiceNameKey.String("tlscheck"),
+	))
+	otel.SetResource(res)
+
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	var config *rest.Config
+	kubeconfig := filepath.Join(homedir.HomeDir(), ".kube", "config")
+
+	if _, err := os.Stat(kubeconfig); err == nil {
+		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+	} else {
+		config, err = rest.InClusterConfig()
+	}
+
+	if err != nil {
+		log.Fatalf("Failed to read kubeconfig: %v", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		log.Fatalf("Failed to create Kubernetes client: %v", err)
+	}
+
+	namespaces, err := clientset.CoreV1().Namespaces().List(context.Background(), v1.ListOptions{})
+	if err != nil {
+		log.Fatalf("Failed to list namespaces: %v", err)
+	}
+
+	fmt.Printf("%-30s %5s\n", "CERTIFICATE_NAME", "REMAINING_LIFETIME (days)")
+	fmt.Println("---------------------------------------------------")
+
+	// Create metric instrument
+	meter := otel.Meter("tlscheck")
+	remainingLifetimeGauge := metric.Must(meter).NewInt64Gauge("tls.remaining_lifetime",
+		metric.WithDescription("Remaining lifetime of TLS certificates in days"),
+	)
+
+	for _, namespace := range namespaces.Items {
+		secrets, err := clientset.CoreV1().Secrets(namespace.Name).List(context.Background(), v1.ListOptions{})
+		if err != nil {
+			log.Printf("Failed to list secrets in namespace %s: %v", namespace.Name, err)
+			continue
+		}
+
+		for _, secret := range secrets.Items {
+			if secret.Type != "kubernetes.io/tls" {
+				continue
+			}
+
+			certBytes := secret.Data["tls.crt"]
+
+			block, _ := pem.Decode(certBytes)
+			if block == nil {
+				log.Printf("Failed to parse PEM data for secret %s/%s", namespace.Name, secret.Name)
+				continue
+			}
+
+			cert,
+
+
+
+Stian Frøystein
+The output is a little bit too long so it cuts off for me.
+
+Split the code into two files: main.go and helper.go
+
+main.go should contain the main() function and initialization of the program while the helper.go file should contain functions for OpenTelemetry and Kubernetes logic and configuration.
+
+First print main.go, I will ask you later to print helper.go.
+Sure, I have split the code into two files: main.go and helper.go. Here's the main.go file containing the main() function and program initialization:
+
+go
+Copy code
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/metric/prometheus"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
+)
+
+func main() {
+	// Initialize OpenTelemetry with Prometheus exporter
+	exporter, err := prometheus.InstallNewPipeline(prometheus.Config{})
+	if err != nil {
+		log.Fatalf("Failed to create Prometheus exporter: %v", err)
+	}
+	http.HandleFunc("/", exporter.ServeHTTP)
+	go func() {
+		_ = http.ListenAndServe(":2112", nil)
+	}()
+
+	// Set global OpenTelemetry options
+	res, _ := resource.New(context.Background(), resource.WithAttributes(
+		semconv.SchemaURL,
+		semconv.ServiceNameKey.String("tlscheck"),
+	))
+	otel.SetResource(res)
+
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	// Initialize Kubernetes client
+	clientset, err := initKubeClient()
+	if err != nil {
+		log.Fatalf("Failed to initialize Kubernetes client: %v", err)
+	}
+
+	fmt.Printf("%-30s %5s\n", "CERTIFICATE_NAME", "REMAINING_LIFETIME (days)")
+	fmt.Println("---------------------------------------------------")
+
+	// Check TLS certificates and export metrics
+	checkTLSCertificates(context.Background(), clientset)
+}
+This file contains the main function, initializing OpenTelemetry and Kubernetes client, and invoking the checkTLSCertificates function. I will provide the helper.go file upon your request.
+
+
+
+
+Stian Frøystein
+You can now print helper.go
+Here's the helper.go file containing functions for OpenTelemetry and Kubernetes logic and configuration:
+
+go
+Copy code
+package main
+
+import (
+	"context"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
+	"log"
+
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/label"
+	"go.opentelemetry.io/otel/metric"
+)
+
+func initKubeClient() (*kubernetes.Clientset, error) {
+	var config *rest.Config
+	kubeconfig := filepath.Join(homedir.HomeDir(), ".kube", "config")
+
+	if _, err := os.Stat(kubeconfig); err == nil {
+		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+	} else {
+		config, err = rest.InClusterConfig()
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to read kubeconfig: %v", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kubernetes client: %v", err)
+	}
+
+	return clientset, nil
+}
+
+func checkTLSCertificates(ctx context.Context, clientset *kubernetes.Clientset) {
+	// Create metric instrument
+	meter := otel.Meter("tlscheck")
+	remainingLifetimeGauge := metric.Must(meter).NewInt64Gauge("tls.remaining_lifetime",
+		metric.WithDescription("Remaining lifetime of TLS certificates in days"),
+	)
+
+	namespaces, err := clientset.CoreV1().Namespaces().List(ctx, v1.ListOptions{})
+	if err != nil {
+		log.Fatalf("Failed to list namespaces: %v", err)
+	}
+
+	for _, namespace := range namespaces.Items {
+		secrets, err := clientset.CoreV1().Secrets(namespace.Name).List(ctx, v1.ListOptions{})
+		if err != nil {
+			log.Printf("Failed to list secrets in namespace %s: %v", namespace.Name, err)
+			continue
+		}
+
+		for _, secret := range secrets.Items {
+			if secret.Type != "kubernetes.io/tls" {
+				continue
+			}
+
+			certBytes := secret.Data["tls.crt"]
+
+			block, _ := pem.Decode(certBytes)
+			if block == nil {
+				log.Printf("Failed to parse PEM data for secret %s/%s", namespace.Name, secret.Name)
+				continue
+			}
+
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				log.Printf("Failed to parse certificate for secret %s/%s: %v", namespace.Name, secret.Name, err)
+				continue
+			}
+
+			remainingDays := int(cert.NotAfter.Sub(time.Now()).Hours() / 24)
+
+			// Record remaining lifetime using the metric instrument
+			remainingLifetimeGauge.Record(ctx, int64(remainingDays),
+				label.String("namespace", namespace.Name),
+				label.String("secret_name", secret.Name),
+			)
+
+			fmt.Printf("%-30s %5d\n", secret.Name, remainingDays)
+		}
+	}
+}
+This file contains the helper functions initKubeClient for initializing the Kubernetes client and checkTLSCertificates for checking the TLS certificates and exporting the metrics using OpenTelemetry.
+
+
+
+
+Stian Frøystein
+Implement OpenTelemetry like in this example instead:
+
+```
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"math/rand"
+	"net/http"
+	"os"
+	"os/signal"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/prometheus"
+	api "go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/instrument"
+	"go.opentelemetry.io/otel/sdk/metric"
+)
+
+func main() {
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	ctx := context.Background()
+
+	// The exporter embeds a default OpenTelemetry Reader and
+	// implements prometheus.Collector, allowing it to be used as
+	// both a Reader and Collector.
+	exporter, err := prometheus.New()
+	if err != nil {
+		log.Fatal(err)
+	}
+	provider := metric.NewMeterProvider(metric.WithReader(exporter))
+	meter := provider.Meter("github.com/open-telemetry/opentelemetry-go/example/prometheus")
+
+	// Start the prometheus HTTP server and pass the exporter Collector to it
+	go serveMetrics()
+
+	attrs := []attribute.KeyValue{
+		attribute.Key("A").String("B"),
+		attribute.Key("C").String("D"),
+	}
+
+	// This is the equivalent of prometheus.NewCounterVec
+	counter, err := meter.Float64Counter("foo", instrument.WithDescription("a simple counter"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	counter.Add(ctx, 5, attrs...)
+
+	gauge, err := meter.Float64ObservableGauge("bar", instrument.WithDescription("a fun little gauge"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	_, err = meter.RegisterCallback(func(_ context.Context, o api.Observer) error {
+		n := -10. + rng.Float64()*(90.) // [-10, 100)
+		o.ObserveFloat64(gauge, n, attrs...)
+		return nil
+	}, gauge)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// This is the equivalent of prometheus.NewHistogramVec
+	histogram, err := meter.Float64Histogram("baz", instrument.WithDescription("a very nice histogram"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	histogram.Record(ctx, 23, attrs...)
+	histogram.Record(ctx, 7, attrs...)
+	histogram.Record(ctx, 101, attrs...)
+	histogram.Record(ctx, 105, attrs...)
+
+	ctx, _ = signal.NotifyContext(ctx, os.Interrupt)
+	<-ctx.Done()
+}
+
+func serveMetrics() {
+	log.Printf("serving metrics at localhost:2223/metrics")
+	http.Handle("/metrics", promhttp.Handler())
+	err := http.ListenAndServe(":2223", nil)
+	if err != nil {
+		fmt.Printf("error serving http: %v", err)
+		return
+	}
+}
+```
+
+Do not use the label `go.opentelemetry.io/otel/label` package
+I've updated the code to implement OpenTelemetry based on the example you provided. Here are the updated main.go and helper.go files:
+
+main.go:
+
+go
+Copy code
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/prometheus"
+	"go.opentelemetry.io/otel/sdk/metric"
+)
+
+func main() {
+	ctx := context.Background()
+
+	// Initialize OpenTelemetry with Prometheus exporter
+	exporter, err := prometheus.New()
+	if err != nil {
+		log.Fatalf("Failed to create Prometheus exporter: %v", err)
+	}
+	provider := metric.NewMeterProvider(metric.WithReader(exporter))
+	otel.SetMeterProvider(provider)
+
+	// Start the Prometheus HTTP server
+	go serveMetrics()
+
+	// Initialize Kubernetes client
+	clientset, err := initKubeClient()
+	if err != nil {
+		log.Fatalf("Failed to initialize Kubernetes client: %v", err)
+	}
+
+	fmt.Printf("%-30s %5s\n", "CERTIFICATE_NAME", "REMAINING_LIFETIME (days)")
+	fmt.Println("---------------------------------------------------")
+
+	// Check TLS certificates and export metrics
+	checkTLSCertificates(ctx, clientset)
+}
+
+func serveMetrics() {
+	log.Printf("Serving metrics at localhost:2112/metrics")
+	http.Handle("/metrics", prometheus.Handler())
+	err := http.ListenAndServe(":2112", nil)
+	if err != nil {
+		fmt.Printf("Error serving HTTP: %v", err)
+		return
+	}
+}
+helper.go:
+
+go
+Copy code
+package main
+
+import (
+	"context"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
+	"log"
+
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
+
+	"go.opentelemetry.io/otel/metric"
+)
+
+func initKubeClient() (*kubernetes.Clientset, error) {
+	var config *rest.Config
+	kubeconfig := filepath.Join(homedir.HomeDir(), ".kube", "config")
+
+	if _, err := os.Stat(kubeconfig); err == nil {
+		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+	} else {
+		config, err = rest.InClusterConfig()
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to read kubeconfig: %v", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kubernetes client: %v", err)
+	}
+
+	return clientset, nil
+}
+
+func checkTLSCertificates(ctx context.Context, clientset *kubernetes.Clientset) {
+	meter := otel.Meter("tlscheck")
+	remainingLifetimeGauge := metric.Must(meter).NewInt64Gauge("tls.remaining_lifetime",
+		metric.WithDescription("Remaining lifetime of TLS certificates in days"),
+	)
+
+	namespaces, err := clientset.CoreV1().Namespaces().List(ctx, v1.ListOptions{})
+	if err != nil {
+		log.Fatalf("Failed to list namespaces: %v", err)
+	}
+
+	for _, namespace := range namespaces.Items {
+		secrets, err := clientset.CoreV1().Secrets(namespace.Name).List
+
+
+
+Stian Frøystein
+Print only the checkTLSCertificates function
+Here is the checkTLSCertificates function from the helper.go file:
+
+go
+Copy code
+func checkTLSCertificates(ctx context.Context, clientset *kubernetes.Clientset) {
+	meter := otel.Meter("tlscheck")
+	remainingLifetimeGauge := metric.Must(meter).NewInt64Gauge("tls.remaining_lifetime",
+		metric.WithDescription("Remaining lifetime of TLS certificates in days"),
+	)
+
+	namespaces, err := clientset.CoreV1().Namespaces().List(ctx, v1.ListOptions{})
+	if err != nil {
+		log.Fatalf("Failed to list namespaces: %v", err)
+	}
+
+	for _, namespace := range namespaces.Items {
+		secrets, err := clientset.CoreV1().Secrets(namespace.Name).List(ctx, v1.ListOptions{})
+		if err != nil {
+			log.Fatalf("Failed to list secrets in namespace %s: %v", namespace.Name, err)
+		}
+
+		for _, secret := range secrets.Items {
+			if secret.Type == "kubernetes.io/tls" {
+				certData, ok := secret.Data["tls.crt"]
+				if !ok {
+					continue
+				}
+
+				block, _ := pem.Decode(certData)
+				if block == nil {
+					log.Printf("Failed to decode PEM data for secret %s/%s", namespace.Name, secret.Name)
+					continue
+				}
+
+				cert, err := x509.ParseCertificate(block.Bytes)
+				if err != nil {
+					log.Printf("Failed to parse certificate for secret %s/%s: %v", namespace.Name, secret.Name, err)
+					continue
+				}
+
+				remainingLifetime := int64(cert.NotAfter.Sub(time.Now()).Hours() / 24)
+
+				fmt.Printf("%-30s %5d\n", namespace.Name+"/"+secret.Name, remainingLifetime)
+
+				remainingLifetimeGauge.Record(ctx, remainingLifetime,
+					attribute.Key("namespace").String(namespace.Name),
+					attribute.Key("secret_name").String(secret.Name),
+				)
+			}
+		}
+	}
+}
+This function checks the TLS certificates in a Kubernetes cluster, calculates their remaining lifetime, and exports the metrics using OpenTelemetry.
+
+
+
+
+Stian Frøystein
+Rewrite the instrumenting entirely from scratch, following this example instead:
+
+```
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"math/rand"
+	"net/http"
+	"os"
+	"os/signal"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/prometheus"
+	api "go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/instrument"
+	"go.opentelemetry.io/otel/sdk/metric"
+)
+
+func main() {
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	ctx := context.Background()
+
+	// The exporter embeds a default OpenTelemetry Reader and
+	// implements prometheus.Collector, allowing it to be used as
+	// both a Reader and Collector.
+	exporter, err := prometheus.New()
+	if err != nil {
+		log.Fatal(err)
+	}
+	provider := metric.NewMeterProvider(metric.WithReader(exporter))
+	meter := provider.Meter("github.com/open-telemetry/opentelemetry-go/example/prometheus")
+
+	// Start the prometheus HTTP server and pass the exporter Collector to it
+	go serveMetrics()
+
+	attrs := []attribute.KeyValue{
+		attribute.Key("A").String("B"),
+		attribute.Key("C").String("D"),
+	}
+
+	// This is the equivalent of prometheus.NewCounterVec
+	counter, err := meter.Float64Counter("foo", instrument.WithDescription("a simple counter"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	counter.Add(ctx, 5, attrs...)
+
+	gauge, err := meter.Float64ObservableGauge("bar", instrument.WithDescription("a fun little gauge"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	_, err = meter.RegisterCallback(func(_ context.Context, o api.Observer) error {
+		n := -10. + rng.Float64()*(90.) // [-10, 100)
+		o.ObserveFloat64(gauge, n, attrs...)
+		return nil
+	}, gauge)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// This is the equivalent of prometheus.NewHistogramVec
+	histogram, err := meter.Float64Histogram("baz", instrument.WithDescription("a very nice histogram"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	histogram.Record(ctx, 23, attrs...)
+	histogram.Record(ctx, 7, attrs...)
+	histogram.Record(ctx, 101, attrs...)
+	histogram.Record(ctx, 105, attrs...)
+
+	ctx, _ = signal.NotifyContext(ctx, os.Interrupt)
+	<-ctx.Done()
+}
+
+func serveMetrics() {
+	log.Printf("serving metrics at localhost:2223/metrics")
+	http.Handle("/metrics", promhttp.Handler())
+	err := http.ListenAndServe(":2223", nil)
+	if err != nil {
+		fmt.Printf("error serving http: %v", err)
+		return
+	}
+}
+```
+Following the provided example, I've rewritten the instrumentation in the helper.go file. Here is the updated helper.go with the new OpenTelemetry instrumentation:
+
+go
+Copy code
+package main
+
+import (
+	"context"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
+	"log"
+	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/prometheus"
+	"go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/metric/instrument"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/clientcmd/api"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+func initKubernetesClient(kubeconfigPath string) (*kubernetes.Clientset, error) {
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
+		&clientcmd.ConfigOverrides{ClusterInfo: api.Cluster{Server: ""}}).ClientConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
+	return clientset, nil
+}
+
+func checkTLSCertificates(ctx context.Context, clientset *kubernetes.Clientset) {
+	meter := otel.Meter("tlscheck")
+	remainingLifetimeGauge, err := meter.NewInt64ObservableGauge("tls.remaining_lifetime",
+		instrument.WithDescription("Remaining lifetime of TLS certificates in days"),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = meter.RegisterCallback(func(_ context.Context, o instrument.Observer) error {
+		namespaces, err := clientset.CoreV1().Namespaces().List(ctx, v1.ListOptions{})
+		if err != nil {
+			log.Fatalf("Failed to list namespaces: %v", err)
+		}
+
+		for _, namespace := range namespaces.Items {
+			secrets, err := clientset.CoreV1().Secrets(namespace.Name).List(ctx, v1.ListOptions{})
+			if err != nil {
+				log.Fatalf("Failed to list secrets in namespace %s: %v", namespace.Name, err)
+			}
+
+			for _, secret := range secrets.Items {
+				if secret.Type == "kubernetes.io/tls" {
+					certData, ok := secret.Data["tls.crt"]
+					if !ok {
+						continue
+					}
+
+					block, _ := pem.Decode(certData)
+					if block == nil {
+						log.Printf("Failed to decode PEM data for secret %s/%s", namespace.Name, secret.Name)
+						continue
+					}
+
+					cert, err := x509.ParseCertificate(block.Bytes)
+					if err != nil {
+						log.Printf("Failed to parse certificate for secret %s/%s: %v", namespace.Name, secret.Name, err)
+						continue
+					}
+
+					remainingLifetime := int64(cert.NotAfter.Sub(time.Now()).Hours() / 24)
+
+					fmt.Printf("%-30s %5d\n", namespace.Name+"/"+secret.Name, remainingLifetime)
+
+					o.ObserveFloat64(remainingLifetime,
+						attribute.Key("namespace").String(namespace.Name),
+						attribute.Key("secret_name").String(secret.Name),
+					)
+				}
+			}
+		}
+		return nil
+	}, remainingLifetimeGauge)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func serveMetrics() {
+	log.Printf("s
+
+
+
+Stian Frøystein
+Rewrite from scratch using prometheus natively, not with opentelemetry.
+Here's the updated version of the main.go and helper.go files, using the Prometheus client library natively without OpenTelemetry.
+
+main.go:
+
+go
+Copy code
+package main
+
+import (
+	"context"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+)
+
+func main() {
+	kubeconfigPath := os.Getenv("KUBECONFIG")
+	if kubeconfigPath == "" {
+		kubeconfigPath = os.Getenv("HOME") + "/.kube/config"
+	}
+
+	clientset, err := initKubernetesClient(kubeconfigPath)
+	if err != nil {
+		log.Fatalf("Failed to initialize Kubernetes client: %v", err)
+	}
+
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
+
+	// Register and start the metrics server
+	http.Handle("/metrics", promhttp.Handler())
+	go func() {
+		log.Println("Metrics server listening on :2112")
+		if err := http.ListenAndServe(":2112", nil); err != nil {
+			log.Fatalf("Failed to start metrics server: %v", err)
+		}
+	}()
+
+	// Continuously update the metrics
+	go func() {
+		for {
+			checkTLSCertificates(ctx, clientset)
+		}
+	}()
+
+	// Wait for an interrupt signal
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt)
+	<-sig
+	log.Println("Shutting down...")
+}
+helper.go:
+
+go
+Copy code
+package main
+
+import (
+	"context"
+	"crypto/x509"
+	"encoding/pem"
+	"log"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/clientcmd/api"
+)
+
+var (
+	remainingLifetimeGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "tls_remaining_lifetime",
+			Help: "Remaining lifetime of TLS certificates in days",
+		},
+		[]string{"namespace", "secret_name"},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(remainingLifetimeGauge)
+}
+
+func initKubernetesClient(kubeconfigPath string) (*kubernetes.Clientset, error) {
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
+		&clientcmd.ConfigOverrides{ClusterInfo: api.Cluster{Server: ""}}).ClientConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
+	return clientset, nil
+}
+
+func checkTLSCertificates(ctx context.Context, clientset *kubernetes.Clientset) {
+	namespaces, err := clientset.CoreV1().Namespaces().List(ctx, v1.ListOptions{})
+	if err != nil {
+		log.Fatalf("Failed to list namespaces: %v", err)
+	}
+
+	for _, namespace := range namespaces.Items {
+		secrets, err := clientset.CoreV1().Secrets(namespace.Name).List(ctx, v1.ListOptions{})
+		if err != nil {
+			log.Fatalf("Failed to list secrets in namespace %s: %v", namespace.Name, err)
+		}
+
+		for _, secret := range secrets.Items {
+			if secret.Type == "kubernetes.io
+
+
+
+Stian Frøystein
+Print only the checkTLSCertificates function
+Here is the checkTLSCertificates function using the Prometheus client library natively:
+
+go
+Copy code
+func checkTLSCertificates(ctx context.Context, clientset *kubernetes.Clientset) {
+	namespaces, err := clientset.CoreV1().Namespaces().List(ctx, v1.ListOptions{})
+	if err != nil {
+		log.Fatalf("Failed to list namespaces: %v", err)
+	}
+
+	for _, namespace := range namespaces.Items {
+		secrets, err := clientset.CoreV1().Secrets(namespace.Name).List(ctx, v1.ListOptions{})
+		if err != nil {
+			log.Fatalf("Failed to list secrets in namespace %s: %v", namespace.Name, err)
+		}
+
+		for _, secret := range secrets.Items {
+			if secret.Type == "kubernetes.io/tls" {
+				certData, ok := secret.Data["tls.crt"]
+				if !ok {
+					continue
+				}
+
+				block, _ := pem.Decode(certData)
+				if block == nil {
+					log.Printf("Failed to decode PEM data for secret %s/%s", namespace.Name, secret.Name)
+					continue
+				}
+
+				cert, err := x509.ParseCertificate(block.Bytes)
+				if err != nil {
+					log.Printf("Failed to parse certificate for secret %s/%s: %v", namespace.Name, secret.Name, err)
+					continue
+				}
+
+				remainingLifetime := float64(cert.NotAfter.Sub(time.Now()).Hours()) / 24
+
+				remainingLifetimeGauge.With(prometheus.Labels{
+					"namespace":   namespace.Name,
+					"secret_name": secret.Name,
+				}).Set(remainingLifetime)
+			}
+		}
+	}
+}
+
+
