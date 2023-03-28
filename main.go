@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"text/tabwriter"
 	"time"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,8 +26,14 @@ func main() {
 
 	if _, err := os.Stat(kubeconfig); err == nil {
 		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+		if err != nil {
+			log.Println(err)
+		}
 	} else {
 		config, err = rest.InClusterConfig()
+		if err != nil {
+			log.Println(err)
+		}
 	}
 
 	if err != nil {
@@ -43,8 +50,8 @@ func main() {
 		log.Fatalf("Failed to list namespaces: %v", err)
 	}
 
-	fmt.Printf("%-30s %5s\n", "CERTIFICATE_NAME", "REMAINING_LIFETIME (days)")
-	fmt.Println("---------------------------------------------------")
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(w, "%-30s\t%-30s\t%s\t%5s\n", "SECRET", "NAMESPACE", "ISSUER", "REMAINING_LIFETIME (days)")
 
 	for _, namespace := range namespaces.Items {
 		secrets, err := clientset.CoreV1().Secrets(namespace.Name).List(context.Background(), v1.ListOptions{})
@@ -73,7 +80,11 @@ func main() {
 			}
 
 			remainingDays := int(cert.NotAfter.Sub(time.Now()).Hours() / 24)
-			fmt.Printf("%-30s %5d\n", secret.Name, remainingDays)
+			issuer := cert.Issuer.String()
+			// Skip if cert.Issuer is openshift ca
+			fmt.Fprintf(w, "%-30s\t%-30s\t%s\t%5d\n", secret.Name, secret.Namespace, issuer, remainingDays)
 		}
 	}
+
+	w.Flush()
 }
